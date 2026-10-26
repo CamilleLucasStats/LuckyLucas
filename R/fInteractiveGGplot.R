@@ -1,40 +1,43 @@
 #' Rend un ggplot interactif et personnalisable (HTML)
 #'
-#' @param Plot          Un objet ggplot.
-#' @param tooltip       Esthétiques affichées au survol. NULL = automatique :
-#'                      "text" si une esthétique text existe, sinon "all".
-#' @param couleurs      TRUE pour afficher un sélecteur de couleur par groupe.
-#' @param editable      TRUE pour pouvoir modifier titre, axes et légende au clic.
-#' @param titre_panneau Texte au-dessus des sélecteurs de couleur.
-#' @param nom_export    Nom du fichier image téléchargé via l'icône appareil photo.
-#' @param format_export Format de l'image téléchargée : "png", "svg", "jpeg" ou "webp".
-#' @param largeur,hauteur Taille du graphique en pixels (NULL = automatique).
-#' @param fichier       Chemin d'un fichier .html à enregistrer (NULL = pas d'enregistrement).
+#' @param Plot             Un objet ggplot.
+#' @param tooltip          Esthétiques affichées au survol. NULL = automatique :
+#'                         "text" si une esthétique text existe, sinon "all".
+#' @param couleurs         TRUE pour afficher un sélecteur de couleur par groupe.
+#' @param editable         TRUE pour pouvoir modifier titre, axes et légende au clic.
+#' @param titre_panneau    Texte au-dessus des sélecteurs de couleur.
+#' @param position_panneau Position du panneau : "dessus" ou "dessous" le graphique.
+#' @param nom_export       Nom du fichier image téléchargé via l'icône appareil photo.
+#' @param format_export    Format de l'image téléchargée : "png", "svg", "jpeg" ou "webp".
+#' @param largeur,hauteur  Taille du graphique en pixels (NULL = automatique).
+#' @param fichier          Chemin d'un fichier .html à enregistrer (NULL = pas d'enregistrement).
 #'
 #' @return Un widget plotly.
 #' @export
 fInteractiveGGplot <- function(Plot,
-                               tooltip       = NULL,
-                               couleurs      = TRUE,
-                               editable      = TRUE,
-                               titre_panneau = "Couleurs :",
-                               nom_export    = "graphique",
-                               format_export = c("png", "svg", "jpeg", "webp"),
-                               largeur       = NULL,
-                               hauteur       = NULL,
-                               fichier       = NULL) {
-
-  format_export <- match.arg(format_export)
-
+                               tooltip          = NULL,
+                               couleurs         = TRUE,
+                               editable         = TRUE,
+                               titre_panneau    = "Couleurs :",
+                               position_panneau = c("dessus", "dessous"),
+                               nom_export       = "graphique",
+                               format_export    = c("png", "svg", "jpeg", "webp"),
+                               largeur          = NULL,
+                               hauteur          = NULL,
+                               fichier          = NULL) {
+  
+  format_export    <- match.arg(format_export)
+  position_panneau <- match.arg(position_panneau)
+  
   # Infobulle automatique : "text" si le graphique en définit une
   if (is.null(tooltip)) {
     aes_plot   <- names(Plot$mapping)
     aes_layers <- unlist(lapply(Plot$layers, function(l) names(l$mapping)))
     tooltip    <- if ("text" %in% c(aes_plot, aes_layers)) "text" else "all"
   }
-
+  
   p <- plotly::ggplotly(Plot, tooltip = tooltip, width = largeur, height = hauteur)
-
+  
   p <- plotly::config(
     p,
     editable               = editable,
@@ -45,7 +48,7 @@ fInteractiveGGplot <- function(Plot,
                                   filename = nom_export,
                                   scale = 2)
   )
-
+  
   js <- r"---(
 function(el, x, opts) {
   if (!opts.couleurs && !opts.editable) return;
@@ -87,6 +90,9 @@ function(el, x, opts) {
   var dataInit   = copie(x.data);
   var layoutInit = copie(x.layout);
   var configInit = copie(x.config || {});
+
+  // Hauteur prévue pour le widget (avant ajout du panneau)
+  var hauteurOrig = el.style.height || (el.offsetHeight + 'px');
 
   // Regroupe les traces par groupe de légende
   var groupes = {};
@@ -137,9 +143,10 @@ function(el, x, opts) {
   var historique = [];
   var noms = Object.keys(groupes);
 
-  // Panneau
+  // Panneau (padding plutôt que margin pour que sa hauteur soit mesurable)
   var panneau = document.createElement('div');
-  panneau.style.cssText = 'display:flex;flex-wrap:wrap;align-items:center;gap:12px;margin:8px 0;font:13px sans-serif';
+  panneau.style.cssText = 'display:flex;flex-wrap:wrap;align-items:center;gap:12px;' +
+                          'padding:8px 0;font:13px sans-serif;box-sizing:border-box';
 
   if (noms.length) {
     var titre = document.createElement('b');
@@ -187,7 +194,8 @@ function(el, x, opts) {
 
   barre.appendChild(bouton('\u27F2 R\u00e9initialiser', function() {
     historique = [];
-    Plotly.react(el, copie(dataInit), copie(layoutInit), copie(configInit));
+    Plotly.react(el, copie(dataInit), copie(layoutInit), copie(configInit))
+      .then(placer);
     noms.forEach(function(g) {
       groupes[g].actuelle = groupes[g].origine;
       groupes[g].input.value = groupes[g].origine;
@@ -195,13 +203,52 @@ function(el, x, opts) {
   }));
 
   panneau.appendChild(barre);
-  el.parentNode.insertBefore(panneau, el);
+
+  // Insertion du panneau (le graphique reste à sa place dans la page)
+  if (opts.position === 'dessous') {
+    el.parentNode.insertBefore(panneau, el.nextSibling);
+  } else {
+    el.parentNode.insertBefore(panneau, el);
+  }
+
+  // Redessine le graphique à la taille de son conteneur
+  function ajusterTaille() {
+    var maj = {}, fl = el._fullLayout || {};
+    var w = el.clientWidth, h = el.clientHeight;
+    if (!opts.largeur_fixe && w && Math.abs((fl.width  || 0) - w) > 1) maj.width  = w;
+    if (!opts.hauteur_fixe && h && Math.abs((fl.height || 0) - h) > 1) maj.height = h;
+    if (Object.keys(maj).length) Plotly.relayout(el, maj);
+  }
+
+  // Retire la hauteur du panneau à celle du graphique
+  function placer() {
+    if (!opts.hauteur_fixe) {
+      var h = 'calc(' + hauteurOrig + ' - ' + panneau.offsetHeight + 'px)';
+      if (el.style.height !== h) el.style.height = h;
+    }
+    ajusterTaille();
+  }
+
+  placer();
+  if (window.ResizeObserver) {
+    var obs = new ResizeObserver(function() { placer(); });
+    obs.observe(panneau);
+    obs.observe(el);
+  } else {
+    window.addEventListener('resize', placer);
+  }
+  requestAnimationFrame(placer);
 }
 )---"
 
 p <- htmlwidgets::onRender(
   p, js,
-  data = list(titre = titre_panneau, couleurs = couleurs, editable = editable)
+  data = list(titre        = titre_panneau,
+              couleurs     = couleurs,
+              editable     = editable,
+              position     = position_panneau,
+              largeur_fixe = !is.null(largeur),
+              hauteur_fixe = !is.null(hauteur))
 )
 
 if (!is.null(fichier)) {
