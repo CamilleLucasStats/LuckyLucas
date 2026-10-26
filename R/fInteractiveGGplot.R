@@ -3,6 +3,9 @@
 #' @param Plot             Un objet ggplot.
 #' @param tooltip          Esthétiques affichées au survol. NULL = automatique :
 #'                         "text" si une esthétique text existe, sinon "all".
+#' @param survol           "point" : infobulle du point le plus proche ;
+#'                         "abscisse" : une infobulle groupant tous les groupes
+#'                         pour l'abscisse survolée.
 #' @param couleurs         TRUE pour afficher un sélecteur de couleur par groupe.
 #' @param editable         TRUE pour pouvoir modifier titre, axes et légende au clic.
 #' @param titre_panneau    Texte au-dessus des sélecteurs de couleur.
@@ -16,6 +19,7 @@
 #' @export
 fInteractiveGGplot <- function(Plot,
                                     tooltip          = NULL,
+                                    survol           = c("point", "abscisse"),
                                     couleurs         = TRUE,
                                     editable         = TRUE,
                                     titre_panneau    = "Couleurs :",
@@ -26,6 +30,7 @@ fInteractiveGGplot <- function(Plot,
                                     hauteur          = NULL,
                                     fichier          = NULL) {
 
+  survol           <- match.arg(survol)
   format_export    <- match.arg(format_export)
   position_panneau <- match.arg(position_panneau)
 
@@ -38,9 +43,32 @@ fInteractiveGGplot <- function(Plot,
 
   p <- plotly::ggplotly(Plot, tooltip = tooltip, width = largeur, height = hauteur)
 
+  # Survol : zone de détection élargie autour des points
+  p <- plotly::layout(
+    p,
+    hovermode     = if (survol == "abscisse") "x unified" else "closest",
+    hoverdistance = 30
+  )
+
+  # Seuls les textes sont modifiables au clic ; rien n'est déplaçable,
+  # pour que les formes issues du thème ggplot ne bloquent pas la souris
+  edits <- list(
+    titleText          = editable,
+    axisTitleText      = editable,
+    legendText         = editable,
+    annotationText     = editable,
+    colorbarTitleText  = editable,
+    legendPosition     = FALSE,
+    annotationPosition = FALSE,
+    annotationTail     = FALSE,
+    colorbarPosition   = FALSE,
+    shapePosition      = FALSE
+  )
+
   p <- plotly::config(
     p,
-    editable               = editable,
+    editable               = FALSE,
+    edits                  = edits,
     locale                 = "fr",
     displaylogo            = FALSE,
     modeBarButtonsToRemove = c("lasso2d", "select2d"),

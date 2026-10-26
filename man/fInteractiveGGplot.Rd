@@ -7,6 +7,7 @@
 fInteractiveGGplot(
   Plot,
   tooltip = NULL,
+  survol = c("point", "abscisse"),
   couleurs = TRUE,
   editable = TRUE,
   titre_panneau = "Couleurs :",
@@ -23,6 +24,10 @@ fInteractiveGGplot(
 
 \item{tooltip}{Esthétiques affichées au survol. NULL = automatique :
 "text" si une esthétique text existe, sinon "all".}
+
+\item{survol}{"point" : infobulle du point le plus proche ;
+"abscisse" : une infobulle groupant tous les groupes
+pour l'abscisse survolée.}
 
 \item{couleurs}{TRUE pour afficher un sélecteur de couleur par groupe.}
 
