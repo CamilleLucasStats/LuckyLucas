@@ -18,17 +18,17 @@
 #' @return Un widget plotly.
 #' @export
 fInteractiveGGplot <- function(Plot,
-                                    tooltip          = NULL,
-                                    survol           = c("point", "abscisse"),
-                                    couleurs         = TRUE,
-                                    editable         = TRUE,
-                                    titre_panneau    = "Couleurs :",
-                                    position_panneau = c("dessus", "dessous"),
-                                    nom_export       = "graphique",
-                                    format_export    = c("png", "svg", "jpeg", "webp"),
-                                    largeur          = NULL,
-                                    hauteur          = NULL,
-                                    fichier          = NULL) {
+                               tooltip          = NULL,
+                               survol           = c("point", "abscisse"),
+                               couleurs         = TRUE,
+                               editable         = TRUE,
+                               titre_panneau    = "Couleurs :",
+                               position_panneau = c("dessus", "dessous"),
+                               nom_export       = "graphique",
+                               format_export    = c("png", "svg", "jpeg", "webp"),
+                               largeur          = NULL,
+                               hauteur          = NULL,
+                               fichier          = NULL) {
 
   survol           <- match.arg(survol)
   format_export    <- match.arg(format_export)
@@ -82,6 +82,31 @@ function(el, x, opts) {
   if (!opts.couleurs && !opts.editable) return;
 
   function copie(o) { return JSON.parse(JSON.stringify(o)); }
+
+  // ---- Page rouverte après une sauvegarde ----
+  // Le panneau enregistré avec la page est inerte (ses événements ne sont
+  // pas sauvegardés) : on le retire, un panneau neuf est recréé plus bas
+  document.querySelectorAll('.lucky-panneau').forEach(function(p) {
+    if (p.getAttribute('data-pour') === el.id) p.remove();
+  });
+
+  // Modifications de l'utilisateur (couleurs, textes), gardées dans un
+  // élément caché pour qu'elles soient conservées par la sauvegarde de la page
+  var stock = null;
+  document.querySelectorAll('.lucky-etat').forEach(function(d) {
+    if (d.getAttribute('data-pour') === el.id) stock = d;
+  });
+  if (!stock) {
+    stock = document.createElement('div');
+    stock.className = 'lucky-etat';
+    stock.hidden = true;
+    stock.setAttribute('data-pour', el.id);
+    el.parentNode.insertBefore(stock, el.nextSibling);
+  }
+  function etatVide() { return { couleurs: {}, textes: {}, noms: {} }; }
+  var etat = etatVide();
+  try { Object.assign(etat, JSON.parse(stock.getAttribute('data-etat') || '{}')); } catch (e) {}
+  function enregistrer() { stock.setAttribute('data-etat', JSON.stringify(etat)); }
 
   // Lit une couleur ('#rrggbb', 'rgb()', 'rgba()') -> {hex, alpha}
   function analyse(c) {
@@ -168,6 +193,13 @@ function(el, x, opts) {
     G.input.value = hex;
   }
 
+  // Mémorise la couleur d'un groupe (rien à garder si c'est celle d'origine)
+  function memoriser(g, hex) {
+    if (hex === groupes[g].origine) delete etat.couleurs[g];
+    else etat.couleurs[g] = hex;
+    enregistrer();
+  }
+
   var historique = [];
   var noms = Object.keys(groupes);
 
@@ -175,6 +207,8 @@ function(el, x, opts) {
   var panneau = document.createElement('div');
   panneau.style.cssText = 'display:flex;flex-wrap:wrap;align-items:center;gap:12px;' +
                           'padding:8px 0;font:13px sans-serif;box-sizing:border-box';
+  panneau.className = 'lucky-panneau';
+  panneau.setAttribute('data-pour', el.id);
 
   if (noms.length) {
     var titre = document.createElement('b');
@@ -193,6 +227,7 @@ function(el, x, opts) {
       inp.onchange = function() {
         historique.push({ g: g, couleur: G.actuelle });
         G.actuelle = this.value;
+        memoriser(g, this.value);
       };
       G.input = inp;
       lab.appendChild(inp);
@@ -217,11 +252,14 @@ function(el, x, opts) {
       if (!h) return;
       appliquer(h.g, h.couleur);
       groupes[h.g].actuelle = h.couleur;
+      memoriser(h.g, h.couleur);
     }));
   }
 
   barre.appendChild(bouton('\u27F2 R\u00e9initialiser', function() {
     historique = [];
+    etat = etatVide();
+    enregistrer();
     Plotly.react(el, copie(dataInit), copie(layoutInit), copie(configInit))
       .then(placer);
     noms.forEach(function(g) {
@@ -238,6 +276,37 @@ function(el, x, opts) {
   } else {
     el.parentNode.insertBefore(panneau, el);
   }
+
+  // Mémorise les textes modifiés au clic : titre, titres d'axes,
+  // bandeaux de facettes (annotations) et libellés de légende
+  if (opts.editable && el.on) {
+    el.on('plotly_relayout', function(maj) {
+      var vu = false;
+      Object.keys(maj || {}).forEach(function(k) {
+        if (/(title|text)$/.test(k)) { etat.textes[k] = maj[k]; vu = true; }
+      });
+      if (vu) enregistrer();
+    });
+    el.on('plotly_restyle', function(ev) {
+      var maj = ev && ev[0], traces = ev && ev[1];
+      if (!maj || maj.name === undefined || traces === undefined) return;
+      [].concat(traces).forEach(function(i, k) {
+        etat.noms[i] = Array.isArray(maj.name) ? maj.name[k % maj.name.length] : maj.name;
+      });
+      enregistrer();
+    });
+  }
+
+  // Réapplique les modifications enregistrées avec la page
+  Object.keys(etat.couleurs).forEach(function(g) {
+    if (!groupes[g]) return;
+    appliquer(g, etat.couleurs[g]);
+    groupes[g].actuelle = etat.couleurs[g];
+  });
+  Object.keys(etat.noms).forEach(function(i) {
+    Plotly.restyle(el, { name: etat.noms[i] }, [Number(i)]);
+  });
+  if (Object.keys(etat.textes).length) Plotly.relayout(el, copie(etat.textes));
 
   // Redessine le graphique à la taille de son conteneur
   function ajusterTaille() {
